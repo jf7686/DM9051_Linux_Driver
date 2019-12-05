@@ -1,0 +1,105 @@
+1. 確認 linux kernel 與 linux-header 版本一致, 也可直接更新至新的kernel 版本。
+#sudo apt-get install --reinstall raspberrypi-bootloader raspberrypi-kernel
+#sudo apt-get install raspberrypi-kernel-headers
+
+3 make dm9051 driver, 複製 dm9051.ko to /lib/modules/$(shell uname -r)/kernel/drivers/net/ethernet/davicom
+
+2. 編輯 dm9051 device tree
+	raspberry pi dm9051 device tree example:
+	
+// Overlay for the davicom dm9051 Ethernet Controller
+/dts-v1/;
+/plugin/;
+
+/ {
+    compatible = "brcm,bcm2708";
+
+    fragment@0 {
+        target = <&spi1>; //use spi0, target = <&spi0>;
+        __overlay__ {
+            /* needed to avoid dtc warning */
+            #address-cells = <1>;
+            #size-cells = <0>;
+
+            status = "okay";
+
+            eth1: dm9051@0{
+                compatible = "davicom,dm9051";
+                reg = <2>; 				/*  0 = CE0 pin12 GPIO18
+							   1 = CE1 pin11 GPIO17
+ 							   2 = CE2 pin36 GPIO16
+ 							   refernece /boot/overlays/spi1-3cs.dts
+							*/ 
+                pinctrl-names = "default";
+                pinctrl-0 = <&eth1_pins>;
+                interrupt-parent = <&gpio>;
+                interrupts = <0x1A 0x3>; 		/*  gpio 26, 0x01, 0x03, 0x04 都可使用。
+								IRQ_TYPE_NONE		= 0x00000000,
+								IRQ_TYPE_EDGE_RISING	= 0x00000001,
+								IRQ_TYPE_EDGE_FALLING	= 0x00000002,
+								IRQ_TYPE_EDGE_BOTH	= (IRQ_TYPE_EDGE_FALLING | IRQ_TYPE_EDGE_RISING),
+								IRQ_TYPE_LEVEL_HIGH	= 0x00000004,
+								IRQ_TYPE_LEVEL_LOW	= 0x00000008,
+								IRQ_TYPE_LEVEL_MASK	= (IRQ_TYPE_LEVEL_LOW | IRQ_TYPE_LEVEL_HIGH),
+								IRQ_TYPE_SENSE_MASK	= 0x0000000f,
+								IRQ_TYPE_DEFAULT	= IRQ_TYPE_SENSE_MASK,
+							*/
+                spi-max-frequency = <12000000>;
+                status = "okay";
+            };
+        };
+    };
+
+    fragment@1 {
+        target = <&gpio>;
+        __overlay__ {
+            eth1_pins: eth1_pins {
+                brcm,pins = <0x1A>;
+                brcm,function = <0>; /* in */
+                brcm,pull = <0>; /* none */
+            };
+        };
+    };
+
+    // lock spi-dev on spi1.2
+    fragment@2 {
+        target-path = "spi1/spidev@2";
+        __dormant__ {
+            status = "disabled";
+        };
+    };
+
+	/*
+	// lock spidev on spi0
+	fragment@1 {
+		target = <&spidev0>;
+		__overlay__ {
+			status = "disabled";
+		};
+	};*/
+
+    __overrides__ {
+        int_pin = <&eth1>, "interrupts:0",
+                  <&eth1_pins>, "brcm,pins:0";
+        speed   = <&eth1>, "spi-max-frequency:0";
+    };
+};
+
+3. install device tree compiler tool:
+#sudo apt-get install device-tree-compiler
+
+compiler dts to dtbo :
+
+#sudo dtc -I dts -O dtb -o dt_name.dtbo dt_name.dts
+
+cpoy dt_name.dtbo to /boot/overlays
+
+註解：
+recompiler dtbo to dts :
+#sudo dtc -I dts -I dtb -o dt_name.dts dt_name.dtbo
+
+4. # vim /boot/config.txt add dtoverlay = dt_name
+example dtoverlay = dm9051
+
+上述 dts 寫法 參考下列網址 和 enc28j60.dts 配置： 
+https://dev.seemoo.tu-darmstadt.de/bcm/bcm-rpi3/blob/041eec392e9a2e63d94d5b53059718425703f8f7/kernel/arch/arm/boot/dts/overlays/enc28j60-overlay.dts

@@ -16,12 +16,16 @@
 
 #define DRVNAME_9051                            "dm9051"
 #define CARDNAME_9051                           "dm9051"
-#define VERSION_9051                            "mtk_v0.1"
+//#define VERSION_9051                            "raspi_v2.2"
 
 #define DM9000_ID                               0x90000A46
 #define DM9051_ID                               0x90510A46
 
+#define FifoPointCheck
+
 #define NUMRXBYTECOUNTER                        25
+#define MAX_READYBIT_ZERO_COUNT                 5
+
 /*
 #define NUM_COUNTR_RXBYTE0      600 //100 //2 * 50
 */
@@ -47,6 +51,7 @@
 #define DM9051_PPCR                             0x3D
 
 #define DM9051_MPCR                             0x55
+#define DM9051_TMSR                             0x5A
 
 #define DM9051_MRRL                             0x74 //0xF4
 #define DM9051_MRRH                             0x75 //0xF5

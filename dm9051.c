@@ -26,6 +26,7 @@
  * Ver: V1.69.3 Support interrupt mode and mdio mutex_lock
  * Ver: V2.0  2018/06/19 tianyx (zzztyx55@sina.com)
  * Ver: V2.1  2019/08/28 Jerry (chongji_wang@davicom.com.tw)
+ * Ver: V2.2  2019/09/17 Jerry (chongji_wang@davicom.com.tw)
  */
 
 #include <linux/module.h>
@@ -55,7 +56,7 @@
 
 //------------------------------------------------------------------------------
 #define DRV_NAME                                "dm9051"
-#define DRV_VERSION                             "2.1"
+#define DRV_VERSION                             "2.2"
 
 #define NUM_QUEUE_TAIL                          0xFFFE   //(2) //(5)//(65534= 0xFFFE)MAX_QUEUE_TAIL
 #define DM9051_PHY                              0x40    /* PHY address 0x01 */
@@ -220,15 +221,24 @@ static void dm9051_spi_write_reg(board_info_t *db, unsigned reg, unsigned val)
 /*
  *  set mac
  */
-static int dm9051_write_mac_addr(board_info_t *db)
+static void dm9051_write_mac_addr(board_info_t *db, const unsigned char *mac_src)
 {
-        int i;
+        int i = 0;
 
         for (i = 0; i < ETH_ALEN; i++) {
                 dm9051_spi_write_reg(db, DM9051_PAR + i, db->ndev->dev_addr[i]);
         }
 
-        return 0;
+        dbg_log("Final get MAC address with (%s) : "
+                "%02x:%02x:%02x:%02x:%02x:%02x\n",
+                mac_src,
+                dm9051_spi_read_reg(db, DM9051_PAR + 0),
+                dm9051_spi_read_reg(db, DM9051_PAR + 1),
+                dm9051_spi_read_reg(db, DM9051_PAR + 2),
+                dm9051_spi_read_reg(db, DM9051_PAR + 3),
+                dm9051_spi_read_reg(db, DM9051_PAR + 4),
+                dm9051_spi_read_reg(db, DM9051_PAR + 5)
+               );
 }
 
 /*
@@ -332,21 +342,31 @@ static void dm9051_write_eeprom(board_info_t *db, int offset, u8 *data)
 }
 
 //------------------------------------------------------------------------------
+/*
+    read phy
+ */
 static int dm9051_phy_read_lock(struct net_device *dev, int phy_reg_unused, int reg)
 {
         int val;
         board_info_t *db = netdev_priv(dev);
+
         mutex_lock(&db->addr_lock);
+
         val = dm9051_phy_read(dev, 0, reg);
+
         mutex_unlock(&db->addr_lock);
+
         return val;
 }
 
 static void dm9051_phy_write_lock(struct net_device *dev, int phyaddr_unused, int reg, int value)
 {
         board_info_t *db = netdev_priv(dev);
+
         mutex_lock(&db->addr_lock);
+
         dm9051_phy_write(dev, 0, reg, value);
+
         mutex_unlock(&db->addr_lock);
 }
 
@@ -359,7 +379,7 @@ static int dm9051_phy_read(struct net_device *dev, int phy_reg_unused, int reg)
         dm9051_spi_write_reg(db, DM9051_EPAR, DM9051_PHY | reg);
         dm9051_spi_write_reg(db, DM9051_EPCR, EPCR_ERPRR | EPCR_EPOS);  /* Issue phyxcer read command */
 
-        while ( dm9051_spi_read_reg(db, DM9051_EPCR) & EPCR_ERRE) ;
+        while ( dm9051_spi_read_reg(db, DM9051_EPCR) & EPCR_ERRE);
 
         dm9051_spi_write_reg(db, DM9051_EPCR, 0x0);     /* Clear phyxcer read command */
         /* The read data keeps on REG_0D & REG_0E */
@@ -395,7 +415,7 @@ static inline board_info_t *to_dm9051_board(struct net_device *dev)
 static void dm9051_get_drvinfo(struct net_device *dev, struct ethtool_drvinfo *info)
 {
         strcpy(info->driver, CARDNAME_9051);
-        strcpy(info->version, VERSION_9051);
+        strcpy(info->version, DRV_VERSION);
         strlcpy(info->bus_info, dev_name(dev->dev.parent), sizeof(info->bus_info));
 }
 
@@ -490,7 +510,7 @@ static int dm9051_set_eeprom(struct net_device *dev, struct ethtool_eeprom *ee, 
         int i;
 
         /* EEPROM access is aligned to two bytes */
-        if ((len & 1) != 0 || (offset & 1) != 0) {
+        if (((len & 1) != 0) || ((offset & 1) != 0)) {
                 return -EINVAL;
         }
 
@@ -504,7 +524,6 @@ static int dm9051_set_eeprom(struct net_device *dev, struct ethtool_eeprom *ee, 
 
         return 0;
 }
-
 
 static const struct ethtool_ops dm9051_ethtool_ops = {
         .get_drvinfo    = dm9051_get_drvinfo,
@@ -525,8 +544,6 @@ static const struct ethtool_ops dm9051_ethtool_ops = {
 
 static void dm9051_soft_reset(board_info_t *db)
 {
-        //disable_irq_nosync(db->ndev->irq);
-
         mdelay(2); // delay 2 ms any need before NCR_RST (20170510)
         dm9051_spi_write_reg(db, DM9051_NCR, NCR_RST);
         mdelay(1);
@@ -535,8 +552,6 @@ static void dm9051_soft_reset(board_info_t *db)
 
         //set dm9051 interrupt pin type
         dm9051_set_intcr(db);
-
-        //enable_irq(db->ndev->irq);
 }
 
 static void dm9051_chip_reset(board_info_t *db)
@@ -547,15 +562,18 @@ static void dm9051_chip_reset(board_info_t *db)
         dm9051_spi_write_reg(db, DM9051_FCR, FCR_FLOW_ENABLE);  /* Flow Control */
         dm9051_spi_write_reg(db, DM9051_PPCR, PPCR_SETTING);    /* Fully Pause Packet Count */
 
-        dm9051_spi_write_reg(db, DM9051_IMR, db->imr_all);
+        if (db->irq_now == 0) {
+                db->imr_all = IMR_ALL;
+                dm9051_spi_write_reg(db, DM9051_IMR, db->imr_all);
+        }
         dm9051_spi_write_reg(db, DM9051_RCR, db->rcr_all);
 
         bcopen_rx_info_clear(&db->bC);
 }
 
-void dm9051_fifo_ERRO(board_info_t *db)
+static void dm9051_fifo_ERRO(board_info_t *db)
 {
-        if ((db->bC.rxbyte_counter == 5) ||
+        if ((db->bC.rxbyte_counter == MAX_READYBIT_ZERO_COUNT) ||
                         (db->bC.rxbyte_counter0 == (NUMRXBYTECOUNTER - 1))) {
                 dbg_log("dm9051_chip_reset\n");
                 dm9051_chip_reset(db);
@@ -586,6 +604,10 @@ static void dm9051_init_dm9051(struct net_device *dev)
         dm9051_spi_write_reg(db, DM9051_NSR, NSR_WAKEST | NSR_TX2END | NSR_TX1END);
         dm9051_spi_write_reg(db, DM9051_ISR, ISR_CLR_STATUS); /* Clear interrupt status */
 
+        //db->tx_mem_size = dm9051_spi_read_reg(db, DM9051_TMSR);
+        //db->tx_mem_size *= 1024;
+        //dbg_log("tx memory size = %d\r\n", db->tx_mem_size);
+
         /* Init Driver variable */
         db->imr_all = IMR_ALL;
         db->rcr_all = RCR_DIS_LONG | RCR_DIS_CRC | RCR_RXEN;
@@ -606,7 +628,7 @@ static void dm9051_hash_table_work(struct work_struct *work)
         board_info_t *db = container_of(work, board_info_t, rxctrl_work);
         struct net_device *dev = db->ndev;
 
-        /*.     dbg_log("dm95 [ndo_set_rx_mode ].s\n");*/
+        //dbg_log("dm95 [ndo_set_rx_mode ].s\n");
         dm9051_hash_table(dev);
 }
 
@@ -636,7 +658,6 @@ static int dm9051_write_tx_buf(board_info_t *db, u8 *buff, unsigned len)
 {
         unsigned remain_len = len;
         unsigned pkg_len, offset = 0;
-
 
         if (len > DM9051_PKT_MAX) {
                 dbg_log("warning: send buffer overflow!!!\n");
@@ -732,13 +753,14 @@ static void dm9051_rx(struct net_device *dev)
         u8 isr_reg = 0;
         //bool GoodPacket;
         u16 RxLen = 0;
+        u16 calc_MRR = 0;
 
         /* Get most updated data */
         rxbyte = dm9051_spi_read_reg(db, DM_SPI_MRCMDX); /* Dummy read */
         rxbyte = dm9051_spi_read_reg(db, DM_SPI_MRCMDX); /* Dummy read */
 
         do {
-                if ((rxbyte != DM9051_PKT_RDY) && (rxbyte != 0)) {
+                if (rxbyte != DM9051_PKT_RDY) {
                         dbg_log("rxbyte error = %x\r\n", rxbyte);
                         if ( rxbyte == 0x00 ) {
                                 db->bC.rxbyte_counter0++;
@@ -754,6 +776,11 @@ static void dm9051_rx(struct net_device *dev)
 
                 //GoodPacket = true;
 
+#ifdef FifoPointCheck
+                calc_MRR = (dm9051_spi_read_reg(db, DM9051_MRRH) << 8) +
+                           dm9051_spi_read_reg(db, DM9051_MRRL);  //Save RX SRAM pointer
+#endif //FifoPointCheck
+
                 dm9051_spi_read_reg(db, DM_SPI_MRCMDX); /* Dummy read */
                 dm9051_rd_rxhdr(db, (u8 *)&rxhdr, sizeof(rxhdr));
 
@@ -763,13 +790,13 @@ static void dm9051_rx(struct net_device *dev)
                  * [LARGE THAN 1536 or less than 64]!"
                  */
                 if (((RxLen & 0xFFFF) > DM9051_PKT_MAX) || ((RxLen & 0xFFFF) < 0x40)) {
-                        dbg_log("rx length = %d\r\n", (RxLen & 0xFFFF));
+                        dbg_log("RX length = %d\r\n", (RxLen & 0xFFFF));
                         dm9051_chip_reset(db);
                         return;
                 }
 
                 if (rxhdr.RxStatus & (RSR_FOE | RSR_CE | RSR_AE | RSR_RWTO | RSR_LCS | RSR_RF)) {
-                        dbg_log("rx statue error = %x\r\n", rxhdr.RxStatus);
+                        dbg_log("RX statue error = %x\r\n", rxhdr.RxStatus);
 
                         if (rxhdr.RxStatus & RSR_FOE) {
                                 dev->stats.rx_fifo_errors++;
@@ -812,9 +839,28 @@ static void dm9051_rx(struct net_device *dev)
                 dm9051_read_rx_buf(db, rdptr, (RxLen & 0xFFFF), true);
                 if (!dm9051_chk_data_volid(db, rdptr)) {
                         dbg_log("check rx data fail\r\n");
-                        dm9051_chip_reset(db);
                         return;
                 }
+
+#ifdef FifoPointCheck
+                calc_MRR += (RxLen + 4);
+                if (calc_MRR > 0x3fff) {
+                        calc_MRR -= 0x3400;
+                }
+
+                if (calc_MRR != ((dm9051_spi_read_reg(db, DM9051_MRRH) << 8) +
+                                 dm9051_spi_read_reg(db, DM9051_MRRL))
+                   ) {
+                        dbg_log("RX memory pointer error!!\r\n");
+                        dbg_log("predict RX read pointer = 0x%X, current pointer = 0x%X\r\n",
+                                calc_MRR,
+                                ((dm9051_spi_read_reg(db, DM9051_MRRH) << 8) +
+                                 dm9051_spi_read_reg(db, DM9051_MRRL)));
+
+                        dm9051_spi_write_reg(db, DM9051_MRRH, (calc_MRR >> 8) & 0xff);
+                        dm9051_spi_write_reg(db, DM9051_MRRL, calc_MRR & 0xff);
+                }
+#endif //FifoPointCheck
 
                 //dbg_log("pass 1 packet to upper\n");
 
@@ -853,17 +899,25 @@ static void dm9051_send_out_packet(board_info_t *db)
 {
         struct net_device *dev = db->ndev;
         struct sk_buff *tx_skb;
-        int wait_count = 0;
+        u16 calc_MWR = 0;
+        u8 err_count = 0;
 
         while (!skb_queue_empty(&db->txq)) { // JJ-20140225, When '!empty'
-                wait_count = 0;
-                // wait for sending complete
-                while ((dm9051_spi_read_reg(db, DM9051_TCR) & TCR_TXREQ) && (++wait_count <= 20));
-                if (wait_count >= 20) {
-                        dbg_log("TX complete timeout = %d\r\n", wait_count);
-                }
-
                 tx_skb = skb_dequeue(&db->txq);
+
+                // wait for sending complete
+                while (dm9051_spi_read_reg(db, DM9051_TCR) & TCR_TXREQ);
+
+#ifdef FifoPointCheck
+                calc_MWR = 0;
+                calc_MWR = (dm9051_spi_read_reg(db, DM9051_MWRH) << 8) +
+                           dm9051_spi_read_reg(db, DM9051_MWRL);
+                calc_MWR += tx_skb->len;
+                if (calc_MWR > 0x0bff) {
+                        calc_MWR -= 0x0c00;
+                }
+#endif //FifoPointCheck
+
                 if (tx_skb != NULL) {
                         dm9051_spi_write_reg(db, DM9051_TXPLL, tx_skb->len);
                         dm9051_spi_write_reg(db, DM9051_TXPLH, tx_skb->len >> 8);
@@ -878,10 +932,29 @@ static void dm9051_send_out_packet(board_info_t *db)
 
                         /* done TX */
                         dev_kfree_skb(tx_skb);
+
+#ifdef FifoPointCheck
+                        if (calc_MWR != ((dm9051_spi_read_reg(db, DM9051_MWRH) << 8) +
+                                         dm9051_spi_read_reg(db, DM9051_MWRL))
+                           ) {
+                                err_count++;
+                                if (err_count >= 5) {
+                                        dm9051_chip_reset(db);
+                                } else {
+                                        dbg_log("tx memory pointer error, calc_MWR = 0x%X,"
+                                                " tx_skb->len = 0x%x\n",
+                                                calc_MWR, tx_skb->len);
+                                        dbg_log("MWRH = 0x%X, MWRL = 0x%X\n",
+                                                dm9051_spi_read_reg(db, DM9051_MWRH),
+                                                dm9051_spi_read_reg(db, DM9051_MWRL));
+                                        dm9051_spi_write_reg(db, DM9051_MWRH, (calc_MWR >> 8) & 0xff);
+                                        dm9051_spi_write_reg(db, DM9051_MWRL, calc_MWR & 0xff);
+                                }
+                        }
+#endif //FifoPointCheck
                 } //if
         } //while
 }
-
 
 /*
     sNot used interrupt-related function:
@@ -899,25 +972,20 @@ static irqreturn_t dm951_irq(int irq, void *pw)
 
         return IRQ_HANDLED;
 }
-//************************************************************//
 
-//static void dm9051_tx(board_info_t *db)
-static void dm9051_tx(struct work_struct *work)
+static void dm9051_tx(board_info_t *db)
 {
-        board_info_t *db = container_of(work, board_info_t, tx_work);
         struct net_device *dev = db->ndev;
 
         //dbg_log("++\n");
-        if (db->bt.prob_cntStopped) {
-                mutex_lock(&db->addr_lock);
 
-                db->bt.prob_cntStopped = 0;
-                dm9051_send_out_packet(db);
+        mutex_lock(&db->addr_lock);
 
-                mutex_unlock(&db->addr_lock);
+        dm9051_send_out_packet(db);
 
-                netif_wake_queue(dev);
-        }
+        netif_wake_queue(dev);
+
+        mutex_unlock(&db->addr_lock);
 }
 
 static void dm9051_irq_work_handler(struct work_struct *work)
@@ -929,90 +997,93 @@ static void dm9051_irq_work_handler(struct work_struct *work)
         u8 isr_reg = 0;
         u8 ncr = 0;
         u8 nsr = 0;
-        u8 loop = 0;
+        u8 imr = 0;
         char *speed = NULL;
         char *duplex = NULL;
+
+        db->irq_now = 1; //trigger interrupt flag for dm9051_chip_reset() check.
 
         mutex_lock(&db->addr_lock);
 
         dm9051_spi_write_reg(db, DM9051_IMR, IMR_PAR); // Disable all interrupts
 
-        /*************  send packets  ***********/
-        if (db->bt.prob_cntStopped) { //This is more exactly right!!
-                db->bt.prob_cntStopped = 0;
-                //dm9051_tx(db); // tx.ing in_RX
-                dm9051_send_out_packet(db);
+        // read interrupt status reg
+        isr_reg = dm9051_spi_read_reg(db, DM9051_ISR);
+        dm9051_spi_write_reg(db, DM9051_ISR, isr_reg);  // Clear ISR status ---> can be clear ???
+        //dbg_log("isr_reg=0x%x\n", isr_reg);
 
-                netif_wake_queue(dev);
+        /*********** link status check*************/
+        if (isr_reg & ISR_LNKCHGS) {
+                nsr = dm9051_spi_read_reg(db, DM9051_NSR);
+                db->link = !!(nsr & 0x40); //& NSR_LINKST
+                if (db->link) {
+                        netif_carrier_on(dev);
+                } else {
+                        netif_carrier_off(dev);
+                }
+                dbg_log("Link Status is: %d\n", db->link);
+
+                if (db->link == 1) {
+                        ncr = dm9051_spi_read_reg(db, DM9051_NCR);
+                        speed = (nsr & 0x80) ? "10M" : "100M";
+                        duplex = (ncr & 0x08) ? "Full" : "Half";
+                        dbg_log("Link up %s %s\r\n", speed, duplex);
+                }
         }
 
-        do {
-                loop = 0;
+        // Receive Overflow Counter Overflow and Receive Overflow
+        if (isr_reg & (ISR_ROOS | ISR_ROS)) {
+                dbg_log("RX overflow reset\r\n");
+                dm9051_chip_reset(db);
+        }
 
-                // read interrupt status reg
-                isr_reg = dm9051_spi_read_reg(db, DM9051_ISR);
-                dm9051_spi_write_reg(db, DM9051_ISR, isr_reg);  // Clear ISR status ---> can be clear ???
-                //dbg_log("isr_reg=0x%x\n", isr_reg);
+        if (isr_reg & ISR_PRS) {
+                dm9051_rx(dev);
+        }
 
-                /*********** link status check*************/
-                if (isr_reg & ISR_LNKCHGS) {
-                        nsr = dm9051_spi_read_reg(db, DM9051_NSR);
-                        db->link = !!(nsr & 0x40); //& NSR_LINKST
-                        if (db->link) {
-                                netif_carrier_on(dev);
-                        } else {
-                                netif_carrier_off(dev);
-                        }
-                        dbg_log("Link Status is: %d\n", db->link);
+        db->irq_now = 0;
 
-                        if (db->link == 1) {
-                                ncr = dm9051_spi_read_reg(db, DM9051_NCR);
-                                speed = (nsr & 0x80) ? "10M" : "100M";
-                                duplex = (ncr & 0x08) ? "Full" : "Half";
-                                dbg_log("Link up %s %s\n", speed, duplex);
-                        } else {
-                                loop++;
-                        }
-                }
-
-                // Receive Overflow Counter Overflow and Receive Overflow
-                if ((isr_reg & ISR_ROOS) || (isr_reg & ISR_ROS)) {
-                        dbg_log("RX overflow reset\n");
-                        dm9051_chip_reset(db);
-                        //loop++;
-                }
-
-                if (isr_reg & ISR_PRS) {
-                        dm9051_rx(dev);
-                }
-        } while (loop);
-
-        dm9051_spi_write_reg(db, DM9051_IMR, db->imr_all); // Re-enable interrupt mask
+        //Re-enable interrupt mask
+        db->imr_all = IMR_ALL;
+        dm9051_spi_write_reg(db, DM9051_IMR, db->imr_all);
+        if ((imr = dm9051_spi_read_reg(db, DM9051_IMR)) != IMR_ALL) {
+                dbg_log("imr = 0x%x\r\n", imr);
+                dm9051_spi_write_reg(db, DM9051_IMR, IMR_ALL);
+        }
 
         mutex_unlock(&db->addr_lock);
+
+        /*************  send packets  ***********/
+        if (db->bt.prob_cntStopped) {
+                //dbg_log("cntStopped = %d\r\n", db->bt.prob_cntStopped);
+                dm9051_tx(db); // tx.ing in_RX
+                db->bt.prob_cntStopped = 0;
+        }
 
         enable_irq(db->ndev->irq);
 }
 
-/*static void dm9051_tx_work(struct work_struct *work)
+static void dm9051_tx_work(struct work_struct *work)
 {
-        board_info_t *db = container_of(work, board_info_t, rxctrl_work);
+        board_info_t *db = container_of(work, board_info_t, tx_work);
 
         if (db->bt.prob_cntStopped) { // This is more exactly right!!
                 dm9051_tx(db);
                 db->bt.prob_cntStopped = 0;
         }
-}*/
+}
 
 static netdev_tx_t dm9051_start_xmit(struct sk_buff *skb, struct net_device *dev)
 {
         board_info_t *db = netdev_priv(dev);
+        netdev_tx_t ret = NETDEV_TX_OK;
 
         spin_lock(&db->statelock);
 
-        if (db->bt.prob_cntStopped++ == NUM_QUEUE_TAIL) {
+        db->bt.prob_cntStopped++;
+        if (db->bt.prob_cntStopped == NUM_QUEUE_TAIL) {
                 netif_stop_queue(dev);
-                return NETDEV_TX_BUSY;
+                ret = NETDEV_TX_BUSY;
         } else {
                 skb_queue_tail(&db->txq, skb);
         }
@@ -1021,7 +1092,7 @@ static netdev_tx_t dm9051_start_xmit(struct sk_buff *skb, struct net_device *dev
 
         schedule_work(&db->tx_work);
 
-        return NETDEV_TX_OK;
+        return ret;
 }
 
 static void dm9051_read_intcr(board_info_t *db)
@@ -1094,9 +1165,9 @@ static unsigned int dm9051_get_irq_num(board_info_t *db)
         unsigned int irq_no = 0; //int ret;
         struct device_node *irq_node;
 
-#define IRQ_NODE_NAME "davicom,dm9051"
+        const char irq_node_name[] = "davicom,dm9051";
 
-        irq_node = of_find_compatible_node(NULL, NULL, IRQ_NODE_NAME);
+        irq_node = of_find_compatible_node(NULL, NULL, irq_node_name);
         if (irq_node) {
                 irq_no = irq_of_parse_and_map(irq_node, 0); //spi->irq
                 dbg_log("get irq number irq = %d\n", irq_no);
@@ -1137,7 +1208,7 @@ static int dm9051_is_dma_param(struct board_info *db)
 }
 
 /* Check the macaddr module parameter for a MAC address */
-static int dm9051_is_macaddr_param(u8 *dev_mac)
+static int dm9051_is_cmdline_macaddr(u8 *dev_mac)
 {
         int i = 0, j = 0, got_num = 0, num = 0;
         u8 mtbl[MAC_ADDR_LEN] = {0};
@@ -1150,6 +1221,7 @@ static int dm9051_is_macaddr_param(u8 *dev_mac)
         j = 0;
         num = 0;
         got_num = 0;
+
         while (j < MAC_ADDR_LEN) {
                 if (macaddr[i] && macaddr[i] != ':') {
                         got_num++;
@@ -1181,9 +1253,58 @@ static int dm9051_is_macaddr_param(u8 *dev_mac)
                 for (i = 0; i < MAC_ADDR_LEN; i++) {
                         dev_mac[i] = mtbl[i];
                 }
+
                 return 1;
         } else {
                 return 0;
+        }
+}
+
+static void dm9051_is_eeprom_macaddr(board_info_t *db)
+{
+        int i = 0;
+        u8 eeprom_buf[2] = {0};
+
+        for (i = 0; i < 64; i++) {
+                dm9051_read_eeprom(db, i, eeprom_buf);
+                if (!(i % 8)) {
+                        dbg_log("\n");
+                }
+
+                if (!(i % 4)) {
+                        dbg_log(" ");
+                }
+                dbg_log(" %02x %02x", eeprom_buf[0], eeprom_buf[1]);
+        }
+        dbg_log("\n");
+
+        eeprom_buf[0] = 0x08;
+        eeprom_buf[1] = 0x00;
+        dm9051_write_eeprom(db, (12 + 0) / 2, eeprom_buf);
+
+        eeprom_buf[0] = 0x80;
+        eeprom_buf[1] = 0x41; //  0x0180 | (1<<14), DM9051 E1 (old) set WORD7.D14=1 to 'HP Auto-MDIX enable'
+        dm9051_write_eeprom(db, (14 + 0) / 2, eeprom_buf);
+        dbg_log("[dm9051.write_eeprom():  WORD[%d]= %02x %02x\n",
+                (14 + 0) / 2, eeprom_buf[0], eeprom_buf[1]);
+
+        dbg_log("[dm9051.dump_eeprom():");
+        for (i = 0; i < 16; i++) {
+                dm9051_read_eeprom(db, i, eeprom_buf);
+                if (!(i % 8)) {
+                        dbg_log("\n ");
+                }
+
+                if (!(i % 4)) {
+                        dbg_log(" ");
+                }
+                dbg_log(" %02x %02x", eeprom_buf[0], eeprom_buf[1]);
+        }
+        dbg_log("\n");
+
+        /* The node address from the attached EEPROM(already loaded into the chip), first. */
+        for (i = 0; i < 6; i++) {
+                db->ndev->dev_addr[i] = dm9051_spi_read_reg(db, DM9051_PAR + i);
         }
 }
 
@@ -1302,14 +1423,14 @@ static void SPI_para_config(struct spi_device *spidev)
         spidev->bits_per_word = 8;
 
         if (spi_setup(spidev)) {
-                dbg_log("[dm95_spi] spi_setup fail\n");
+                dbg_log("dm9051_spi spi_setup fail\n");
         }
 }
 #endif //0
 
 static unsigned dm9051_check_id(struct board_info *db)
 {
-        unsigned  chipid;
+        unsigned chipid;
 
         chipid = dm9051_spi_read_reg(db, DM9051_PIDL);
         chipid |= (unsigned)dm9051_spi_read_reg(db, DM9051_PIDH) << 8;
@@ -1319,12 +1440,10 @@ static unsigned dm9051_check_id(struct board_info *db)
 
 static int dm9051_probe(struct spi_device *spi)
 {
-        const unsigned char *mac_addr;
-        const unsigned char *mac_src;
-        unsigned  chipid;
-        int i;
+        const unsigned char *mac_addr = NULL;
+        const unsigned char *mac_src = NULL;
+        unsigned chipid = 0;
         int ret = 0;
-        u8 eeprom_buf[2] = {0};
         struct board_info *db;
         struct net_device *ndev;
 
@@ -1343,6 +1462,8 @@ static int dm9051_probe(struct spi_device *spi)
         db->ndev = ndev;
         db->spidev = spi;
         db->link = 0;
+        db->irq_now = 0;
+        //db->tx_space = 0;
         db->msg_enable = netif_msg_init(debug.msg_enable,
                                         DM9051_MSG_DEFAULT);
 
@@ -1360,13 +1481,20 @@ static int dm9051_probe(struct spi_device *spi)
         mutex_init(&db->addr_lock);
         spin_lock_init(&db->statelock); // used in 'dm9051' 'start' 'xmit'
 
-        dbg_log("spi max length = %d\r\n", SPI_SYNC_TRANSFER_BUF_LEN);
-        if (enable_dma) {
+        //get spi buffer size
+        dbg_log("spi buffer size = %d\r\n", SPI_SYNC_TRANSFER_BUF_LEN);
+
+        //get spi speed
+        dbg_log("spi_max_frequency: %d KHz (%d MHz)\n",
+                spi->max_speed_hz / 1000,
+                spi->max_speed_hz / 1000 / 1000);
+
+        if (enable_dma == 1) {
                 enable_dma = dm9051_is_dma_param(db);
         }
 
         /* Allocate non-DMA buffers */
-        if (!enable_dma) {
+        if (enable_dma != 1) {
                 db->spi_tx_buf = devm_kzalloc(&spi->dev, SPI_SYNC_TRANSFER_BUF_LEN + 4,
                                               GFP_KERNEL);
                 if (!db->spi_tx_buf) {
@@ -1380,17 +1508,12 @@ static int dm9051_probe(struct spi_device *spi)
                         ret = -ENOMEM;
                         goto err_id;
                 }*/
+        } else {
+                dbg_log("enable spi dma\r\n");
         }
 
-        /*if (enable_dma == 1) {
-                dbg_log("enable spi dma\r\n");
-        } else {
-                dbg_log("disable spi dma\r\n");
-        }*/
-
         INIT_WORK(&db->rxctrl_work, dm9051_hash_table_work);
-        //INIT_WORK(&db->tx_work, dm9051_tx_work);
-        INIT_WORK(&db->tx_work, dm9051_tx);
+        INIT_WORK(&db->tx_work, dm9051_tx_work);
         //INIT_DELAYED_WORK(&db->irq_work, dm9051_irq_work_handler);
         INIT_WORK(&db->irq_work, dm9051_irq_work_handler);
 
@@ -1423,41 +1546,11 @@ static int dm9051_probe(struct spi_device *spi)
 
         //Set MAC address
         if (enable_eeprom == 1) {
-                for (i = 0; i < 64; i++) {
-                        dm9051_read_eeprom(db, i, eeprom_buf);
-                        if (!(i % 8)) { dbg_log("\n "); }
-                        if (!(i % 4)) { dbg_log(" "); }
-                        dbg_log(" %02x %02x", eeprom_buf[0], eeprom_buf[1]);
-                }
-                dbg_log("\n");
-
-                eeprom_buf[0] = 0x08;
-                eeprom_buf[1] = 0x00;
-                dm9051_write_eeprom(db, (12 + 0) / 2, eeprom_buf);
-
-                eeprom_buf[0] = 0x80;
-                eeprom_buf[1] = 0x41; //  0x0180 | (1<<14), DM9051 E1 (old) set WORD7.D14=1 to 'HP Auto-MDIX enable'
-                dm9051_write_eeprom(db, (14 + 0) / 2, eeprom_buf);
-                dbg_log("[dm9051.write_eeprom():  WORD[%d]= %02x %02x\n",
-                        (14 + 0) / 2, eeprom_buf[0], eeprom_buf[1]);
-
-                dbg_log("[dm9051.dump_eeprom():");
-                for (i = 0; i < 16; i++) {
-                        dm9051_read_eeprom(db, i, eeprom_buf);
-                        if (!(i % 8)) { dbg_log("\n "); }
-                        if (!(i % 4)) { dbg_log(" "); }
-                        dbg_log(" %02x %02x", eeprom_buf[0], eeprom_buf[1]);
-                }
-                dbg_log("\n");
-
-                /* The node address from the attached EEPROM(already loaded into the chip), first. */
-                mac_src = "eeprom2chip";
-                for (i = 0; i < 6; i++) {
-                        ndev->dev_addr[i] = dm9051_spi_read_reg(db, DM9051_PAR + i);
-                }
+                mac_src = "EEPROM";
+                dm9051_is_eeprom_macaddr(db);
         } else {
                 /* Check module parameters */
-                if (dm9051_is_macaddr_param(ndev->dev_addr) == 1) {
+                if (dm9051_is_cmdline_macaddr(ndev->dev_addr) == 1) {
                         mac_src = "cmdline";
                 }
 
@@ -1472,28 +1565,19 @@ static int dm9051_probe(struct spi_device *spi)
 
         /* The node address by the laboratory fixed (if previous not be valid) */
         if (!is_valid_ether_addr(ndev->dev_addr)) {
-                eth_hw_addr_random(ndev); // get random mac addr
-                mac_src = "random";
+                //eth_hw_addr_random(ndev); // get random mac addr
+                //mac_src = "random";
+                mac_src = "fixed EEPROM"; //"Free-Style";
+                ndev->dev_addr[0] = 0x00;
+                ndev->dev_addr[1] = 0x60;
+                ndev->dev_addr[2] = 0x6e;
+                ndev->dev_addr[3] = 0x90;
+                ndev->dev_addr[4] = 0x51;
+                ndev->dev_addr[5] = 0xee;
         }
 
         //write MAC address to DM9051 register
-        dm9051_write_mac_addr(db);
-
-        dbg_log("Final get MAC address with (%s): "
-                "%02x:%02x:%02x:%02x:%02x:%02x\n",
-                mac_src,
-                dm9051_spi_read_reg(db, DM9051_PAR + 0),
-                dm9051_spi_read_reg(db, DM9051_PAR + 1),
-                dm9051_spi_read_reg(db, DM9051_PAR + 2),
-                dm9051_spi_read_reg(db, DM9051_PAR + 3),
-                dm9051_spi_read_reg(db, DM9051_PAR + 4),
-                dm9051_spi_read_reg(db, DM9051_PAR + 5)
-               );
-
-        //get spi speed
-        dbg_log("spi_max_frequency: %d KHz (%d MHz)\n",
-                spi->max_speed_hz / 1000,
-                spi->max_speed_hz / 1000 / 1000);
+        dm9051_write_mac_addr(db, mac_src);
 
         //get irq number
         spi->irq = dm9051_get_irq_num(db);
@@ -1508,8 +1592,8 @@ static int dm9051_probe(struct spi_device *spi)
                 goto err_irq;
         }
 
-        ndev->if_port = IF_PORT_100BASET;
-        ndev->irq = spi->irq;
+        ndev->if_port     = IF_PORT_100BASET;
+        ndev->irq         = spi->irq;
         ndev->netdev_ops  = &dm9051_netdev_ops;
         ndev->ethtool_ops = &dm9051_ethtool_ops;
 
@@ -1539,7 +1623,7 @@ static int dm9051_remove(struct spi_device *spi)
 
         unregister_netdev(db->ndev);
 
-        if (enable_dma) {
+        if (enable_dma == 1) {
                 dma_free_coherent(&spi->dev, PAGE_SIZE, db->spi_tx_buf, db->spi_tx_dma);
         }
 
@@ -1592,8 +1676,8 @@ static struct spi_driver dm9051_driver = {
                 .bus = &spi_bus_type,
                 //.pm = &dm9051_pm_ops,
         },
-        .probe   = dm9051_probe,
-        .remove  = dm9051_remove,
+        .probe = dm9051_probe,
+        .remove = dm9051_remove,
         //.suspend = dm9051_suspend,
         //.resume  = dm9051_resume,
 };
@@ -1618,13 +1702,18 @@ MODULE_LICENSE("GPL");
 MODULE_ALIAS("spi:dm9051");
 
 module_param(macaddr, charp, 0444); //Jerry add
-MODULE_PARM_DESC(macaddr, "MAC address"); //Jerry add
+MODULE_PARM_DESC(macaddr, "MAC address source from cmdline.txt,\r\n"
+                 "\t\tcmdline.txt write dm9051.macaddr=XX:XX:XX:XX:XX:XX"); //Jerry add
+
+module_param(enable_eeprom, int, 0444);
+MODULE_PARM_DESC(enable_eeprom, "Enable read MAC address from EEPROM,\r\n"
+                 "\t\tDefault : 0 (OFF), 1 (ON),\r\n"
+                 "\t\tcmdline.txt write dm9051.enable_eeprom=1 or 0.\r\n"
+                 "\t\tnote : enable_eeprom=1, priority use EEPROM MAC address,\r\n"
+                 "\t\tunless the EEPROM reads failed");
 
 //module_param(enable_dma, int, 0444);
 //MODULE_PARM_DESC(enable_dma, "Enable SPI DMA. Default: 0 (OFF), 1 (ON)");
 
-module_param(enable_eeprom, int, 0444);
-MODULE_PARM_DESC(enable_eeprom, "Enable EEPROM read MAC address. Default: 0 (OFF), 1 (ON)");
-
-module_param_named(debug, debug.msg_enable, int, 0);
-MODULE_PARM_DESC(debug, "Debug verbosity level (0=none, ..., ffff=all)");
+//module_param_named(debug, debug.msg_enable, int, 0);
+//MODULE_PARM_DESC(debug, "Debug verbosity level (0 = none, ..., ffff = all)");

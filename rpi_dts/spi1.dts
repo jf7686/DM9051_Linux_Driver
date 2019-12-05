@@ -1,0 +1,362 @@
+// Overlay for the davicom dm9051 Ethernet Controller
+/dts-v1/;
+/plugin/;
+
+/ {
+    compatible = "brcm,bcm2708";
+
+    fragment@0 {
+        target = <&spi1>;
+        __overlay__ {
+            /* needed to avoid dtc warning */
+            #address-cells = <1>;
+            #size-cells = <0>;
+
+            status = "okay";
+
+            eth1: dm9051@0{
+                compatible = "davicom,dm9051";
+                reg = <2>; /* CE2 */
+                pinctrl-names = "default";
+                pinctrl-0 = <&eth1_pins>;
+                interrupt-parent = <&gpio>;
+                mac-address = [000a35000001];
+                /*local-mac-address = [00 0a 35 00 00 01]; */
+                interrupts = <26 0x03>; /* falling edge | raising edge*/
+                spi-max-frequency = <12000000>;
+                status = "okay";
+            };
+        };
+    };
+
+    fragment@1 {
+        target = <&gpio>;
+
+        __overlay__ {
+            eth1_pins: eth1_pins {
+                brcm,pins = <26>;
+                brcm,function = <0>; /* in */
+                brcm,pull = <0>; /* none */
+            };
+        };
+    };
+
+    // disable spi-dev on spi1.0
+    fragment@2 {
+        target-path = "spi1/spidev@2";
+
+        __dormant__ {
+            status = "disabled";
+        };
+    };
+
+
+    __overrides__ {
+        int_pin = <&eth1>, "interrupts:0",
+                  <&eth1_pins>, "brcm,pins:0";
+        speed   = <&eth1>, "spi-max-frequency:0";
+    };
+};
+
+//dtc -@ -I dtb -O dts -o enc28j60-spi1.dtbo enc28j60-spi1-overlay.dts
+// Overlay for the Microchip ENC28J60 Ethernet Controller - SPI2 Compute Module
+// Interrupt pin: 39
+/dts-v1/;
+/plugin/;
+
+/{
+        compatible = "brcm,bcm2708";
+
+        fragment@0 {
+                target = <&spi1>; //<&spi2>
+                __overlay__ {
+                        /* needed to avoid dtc warning */
+                        #address-cells = <1>;
+                        #size-cells = <0>;
+
+                        status = "okay";
+
+                        eth1: enc28j60@0{
+                                compatible = "microchip,enc28j60";
+                                reg = <0>; /* CE0 */
+                                pinctrl-names = "default";
+                                pinctrl-0 = <&eth1_pins>;
+                                interrupt-parent = <&gpio>;
+                                interrupts = <39 0x2>; /* falling edge */
+                                spi-max-frequency = <12000000>;
+                                status = "okay";
+                        };
+                };
+        };
+
+        fragment@1 {
+                target = <&gpio>;
+                __overlay__ {
+                        eth1_pins: eth1_pins {
+                                brcm,pins = <39>;
+                                brcm,function = <0>; /* in */
+                                brcm,pull = <0>; /* none */
+                        };
+                };
+        };
+
+        __overrides__ {
+                int_pin = <&eth1>, "interrupts:0",
+                          <&eth1_pins>, "brcm,pins:0";
+                speed   = <&eth1>, "spi-max-frequency:0";
+        };
+};
+
+/dts-v1/;
+
+/ {
+    compatible = "brcm,bcm2708";
+
+    fragment@0 {
+        target = <0xffffffff>;
+
+        __overlay__ {
+            #address-cells = <0x1>;
+            #size-cells = <0x0>;
+            status = "okay";
+
+            dm9051@0 {
+                compatible = "davicom,dm9051";
+                reg = <0x0>;
+                pinctrl-names = "default";
+                pinctrl-0 = <0x1>;
+                interrupt-parent = <0xffffffff>;
+                interrupts = <0x26 0x2>;
+                spi-max-frequency = <0xb71b00>;
+                status = "okay";
+                phandle = <0x2>;
+            };
+        };
+    };
+
+    fragment@1 {
+        target = <0xffffffff>;
+
+        __overlay__ {
+
+            eth1_pins {
+                brcm,pins = <0x26>;
+                brcm,function = <0x0>;
+                brcm,pull = <0x0>;
+                phandle = <0x1>;
+            };
+        };
+    };
+
+    __overrides__ {
+        int_pin = [00 00 00 02 69 6e 74 65 72 72 75 70 74 73 3a 30 00 00 00 00 01 62 72 63 6d 2c 70 69 6e 73 3a 30 00];
+        speed = <0x2 0x7370692d 0x6d61782d 0x66726571 0x75656e63 0x793a3000>;
+    };
+
+    __symbols__ {
+        eth1 = "/fragment@0/__overlay__/dm9051@0";
+        eth1_pins = "/fragment@1/__overlay__/eth1_pins";
+    };
+
+    __fixups__ {
+        spi2 = "/fragment@0:target:0";
+        gpio = "/fragment@0/__overlay__/dm9051@0:interrupt-parent:0", "/fragment@1:target:0";
+    };
+
+    __local_fixups__ {
+
+        fragment@0 {
+
+            __overlay__ {
+
+                dm9051@0 {
+                    pinctrl-0 = <0x0>;
+                };
+            };
+        };
+
+        __overrides__ {
+            int_pin = <0x0 0x11>;
+            speed = <0x0>;
+        };
+    };
+};
+
+/dts-v1/;
+/plugin/;
+
+/ {
+        compatible = "brcm,bcm2835", "brcm,bcm2708", "brcm,bcm2709";
+
+        fragment@0 {
+                target = <&gpio>;
+                __overlay__ {
+                        spi1_pins: spi1_pins {
+                                brcm,pins = <19 20 21>;
+                                brcm,function = <3>; /* alt4 */
+                        };
+
+                        spi1_cs_pins: spi1_cs_pins {
+                                brcm,pins = <16>;
+                                brcm,function = <1>; /* output */
+                        };
+                };
+        };
+
+        fragment@1 {
+                target = <&spi1>;
+                frag1: __overlay__ {
+                        /* needed to avoid dtc warning */
+                        #address-cells = <1>;
+                        #size-cells = <0>;
+                        pinctrl-names = "default";
+                        pinctrl-0 = <&spi1_pins &spi1_cs_pins>;
+                        cs-gpios = <&gpio 16 1>;
+                        status = "okay";
+
+                        spidev1_0: spidev@0 {
+                                compatible = "spidev";
+                                reg = <0>;      /* CE0 */
+                                #address-cells = <1>;
+                                #size-cells = <0>;
+                                spi-max-frequency = <125000000>;
+                                status = "okay";
+                        };
+                };
+        };
+
+        fragment@2 {
+                target = <&aux>;
+                __overlay__ {
+                        status = "okay";
+                };
+        };
+
+        __overrides__ {
+                cs0_pin  = <&spi1_cs_pins>,"brcm,pins:0",
+                           <&frag1>,"cs-gpios:4";
+                cs0_spidev = <&spidev1_0>,"status";
+        };
+};
+
+
+/dts-v1/;
+
+/ {
+    compatible = "brcm,bcm2835", "brcm,bcm2708", "brcm,bcm2709";
+
+    fragment@0 {
+        target = <0xffffffff>;
+
+        __overlay__ {
+
+            spi1_pins {
+                brcm,pins = <0x13 0x14 0x15>;
+                brcm,function = <0x3>;
+                phandle = <0x1>;
+            };
+
+            spi1_cs_pins {
+                brcm,pins = <0x12 0x11 0x10>;
+                brcm,function = <0x1>;
+                phandle = <0x2>;
+            };
+        };
+    };
+
+    fragment@1 {
+        target = <0xffffffff>;
+
+        __overlay__ {
+            #address-cells = <0x1>;
+            #size-cells = <0x0>;
+            pinctrl-names = "default";
+            pinctrl-0 = <0x1 0x2>;
+            cs-gpios = <0xffffffff 0x12 0x1 0xffffffff 0x11 0x1 0xffffffff 0x10 0x1>;
+            status = "okay";
+            phandle = <0x3>;
+
+            spidev@0 {
+                compatible = "spidev";
+                reg = <0x0>;
+                #address-cells = <0x1>;
+                #size-cells = <0x0>;
+                spi-max-frequency = <0x7735940>;
+                status = "okay";
+                phandle = <0x4>;
+            };
+
+            spidev@1 {
+                compatible = "spidev";
+                reg = <0x1>;
+                #address-cells = <0x1>;
+                #size-cells = <0x0>;
+                spi-max-frequency = <0x7735940>;
+                status = "okay";
+                phandle = <0x5>;
+            };
+
+            spidev@2 {
+                compatible = "spidev";
+                reg = <0x2>;
+                #address-cells = <0x1>;
+                #size-cells = <0x0>;
+                spi-max-frequency = <0x7735940>;
+                status = "okay";
+                phandle = <0x6>;
+            };
+        };
+    };
+
+    fragment@2 {
+        target = <0xffffffff>;
+
+        __overlay__ {
+            status = "okay";
+        };
+    };
+
+    __overrides__ {
+        cs0_pin = [00 00 00 02 62 72 63 6d 2c 70 69 6e 73 3a 30 00 00 00 00 03 63 73 2d 67 70 69 6f 73 3a 34 00];
+        cs1_pin = <0x2 0x6272636d 0x2c70696e 0x733a3400 0x3 0x63732d67 0x70696f73 0x3a313600>;
+        cs2_pin = <0x2 0x6272636d 0x2c70696e 0x733a3800 0x3 0x63732d67 0x70696f73 0x3a323800>;
+        cs0_spidev = [00 00 00 04 73 74 61 74 75 73 00];
+        cs1_spidev = [00 00 00 05 73 74 61 74 75 73 00];
+        cs2_spidev = [00 00 00 06 73 74 61 74 75 73 00];
+    };
+
+    __symbols__ {
+        spi1_pins = "/fragment@0/__overlay__/spi1_pins";
+        spi1_cs_pins = "/fragment@0/__overlay__/spi1_cs_pins";
+        frag1 = "/fragment@1/__overlay__";
+        spidev1_0 = "/fragment@1/__overlay__/spidev@0";
+        spidev1_1 = "/fragment@1/__overlay__/spidev@1";
+        spidev1_2 = "/fragment@1/__overlay__/spidev@2";
+    };
+
+    __fixups__ {
+        gpio = "/fragment@0:target:0", "/fragment@1/__overlay__:cs-gpios:0", "/fragment@1/__overlay__:cs-gpios:12", "/fragment@1/__overlay__:cs-gpios:24";
+        spi1 = "/fragment@1:target:0";
+        aux = "/fragment@2:target:0";
+    };
+
+    __local_fixups__ {
+
+        fragment@1 {
+
+            __overlay__ {
+                pinctrl-0 = <0x0 0x4>;
+            };
+        };
+
+        __overrides__ {
+            cs0_pin = <0x0 0x10>;
+            cs1_pin = <0x0 0x10>;
+            cs2_pin = <0x0 0x10>;
+            cs0_spidev = <0x0>;
+            cs1_spidev = <0x0>;
+            cs2_spidev = <0x0>;
+        };
+    };
+};
+

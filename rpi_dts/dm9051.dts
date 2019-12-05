@@ -6,7 +6,10 @@
     compatible = "brcm,bcm2708";
 
     fragment@0 {
-        target = <&spi0>;
+        target = <&spi1>;
+        //dmas = <&dma 10>, <&dma 10>;
+        //dma-names = "tx", "rx";
+
         __overlay__ {
             /* needed to avoid dtc warning */
             #address-cells = <1>;
@@ -14,18 +17,19 @@
 
             status = "okay";
 
-            //disable spidev on spi0.0
-            spidev@0{
+            //disable spidev on spi1.2
+            spidev@2{
                 status = "disabled";
             };
 
-            eth1:dm9051@0{
+            eth1: dm9051@0{
                 compatible = "davicom,dm9051";
-                reg = <0>; /* CE2 */
+                reg = <2>; /* CE2 */
                 pinctrl-names = "default";
                 pinctrl-0 = <&eth1_pins>;
+
                 interrupt-parent = <&gpio>;
-                interrupts = <25 0x01>; /*  gpio 25, 0x01, 0x03, 0x04 都可使用。
+                interrupts = <26 0x08>; /*  gpio 26, 0x01, 0x03, 0x04 都可使用。
                                             IRQ_TYPE_NONE         = 0x00000000,
                                             IRQ_TYPE_EDGE_RISING  = 0x00000001,
                                             IRQ_TYPE_EDGE_FALLING = 0x00000002,
@@ -51,7 +55,7 @@
 
         __overlay__ {
             eth1_pins: eth1_pins {
-                brcm,pins = <25>;
+                brcm,pins = <26>;
                 brcm,function = <0>; /* in */
                 brcm,pull = <0>; /* none */
             };
@@ -60,9 +64,9 @@
 
     // disable spi-dev on spi1.0
     /*fragment@2 {
-        target = <&spidev0>;
+        target-path = "spi1/spidev@2";
 
-        __overlay__ {
+        __dormant__ {
             status = "disabled";
         };
     };*/

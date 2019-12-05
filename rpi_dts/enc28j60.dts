@@ -1,0 +1,85 @@
+/dts-v1/;
+
+/ {
+        compatible = "brcm,bcm2835";
+
+        fragment@0 {
+                target = <0xffffffff>;
+
+                __overlay__ {
+                        #address-cells = <0x1>;
+                        #size-cells = <0x0>;
+                        status = "okay";
+
+                        enc28j60@0 {
+                                compatible = "microchip,enc28j60";
+                                reg = <0x0>;
+                                pinctrl-names = "default";
+                                pinctrl-0 = <0x1>;
+
+                                interrupt-parent = <0xffffffff>;
+                                interrupts = <0x19 0x2>;
+                                spi-max-frequency = <0xb71b00>;
+
+                                status = "okay";
+                                phandle = <0x2>;
+                        };
+                };
+        };
+
+        fragment@1 {
+                target = <0xffffffff>;
+
+                __overlay__ {
+                        status = "disabled";
+                };
+        };
+
+        fragment@2 {
+                target = <0xffffffff>;
+
+                __overlay__ {
+
+                        eth1_pins {
+                                brcm,pins = <0x19>;
+                                brcm,function = <0x0>;
+                                brcm,pull = <0x0>;
+                                phandle = <0x1>;
+                        };
+                };
+        };
+
+        __overrides__ {
+                int_pin = [00 00 00 02 69 6e 74 65 72 72 75 70 74 73 3a 30 00 00 00 00 01 62 72 63 6d 2c 70 69 6e 73 3a 30 00];
+                speed = <0x2 0x7370692d 0x6d61782d 0x66726571 0x75656e63 0x793a3000>;
+        };
+
+        __symbols__ {
+                eth1 = "/fragment@0/__overlay__/enc28j60@0";
+                eth1_pins = "/fragment@2/__overlay__/eth1_pins";
+        };
+
+        __fixups__ {
+                spi0 = "/fragment@0:target:0";
+                gpio = "/fragment@0/__overlay__/enc28j60@0:interrupt-parent:0", "/fragment@2:target:0";
+                spidev0 = "/fragment@1:target:0";
+        };
+
+        __local_fixups__ {
+
+                fragment@0 {
+
+                        __overlay__ {
+
+                                enc28j60@0 {
+                                        pinctrl-0 = <0x0>;
+                                };
+                        };
+                };
+
+                __overrides__ {
+                        int_pin = <0x0 0x11>;
+                        speed = <0x0>;
+                };
+        };
+};

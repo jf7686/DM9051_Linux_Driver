@@ -54,6 +54,7 @@ typedef struct board_info {
 
         int in_power_off;
 
+        u8 irq_now;
         //struct delayed_work irq_work;
         struct work_struct irq_work;
         struct work_struct tx_work;

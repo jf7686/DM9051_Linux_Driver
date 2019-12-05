@@ -7,12 +7,10 @@
 
     fragment@0 {
         target = <&spi1>;
-
         __overlay__ {
             /* needed to avoid dtc warning */
             #address-cells = <1>;
             #size-cells = <0>;
-
             status = "okay";
 
             //disable spidev on spi1.2
@@ -25,9 +23,10 @@
                 reg = <2>; /* CE2 */
                 pinctrl-names = "default";
                 pinctrl-0 = <&eth1_pins>;
-
                 interrupt-parent = <&gpio>;
-                interrupts = <26 0x08>; /*  gpio 26, 0x01, 0x03, 0x04 都可使用。
+                //mac-address = [000a35000001];
+                local-mac-address = [00 0A 35 00 00 01];
+                interrupts = <26 0x01>; /*  gpio 26, 0x01, 0x03, 0x04 都可使用。
                                             IRQ_TYPE_NONE         = 0x00000000,
                                             IRQ_TYPE_EDGE_RISING  = 0x00000001,
                                             IRQ_TYPE_EDGE_FALLING = 0x00000002,
@@ -38,10 +37,6 @@
                                             IRQ_TYPE_SENSE_MASK   = 0x0000000f,
                                             IRQ_TYPE_DEFAULT      = IRQ_TYPE_SENSE_MASK,
                                         */
-
-                //mac-address = [000a35000001];
-                local-mac-address = [00 0A 35 00 00 01];
-
                 spi-max-frequency = <12000000>;
                 status = "okay";
             };
@@ -61,13 +56,13 @@
     };
 
     // disable spi-dev on spi1.0
-    /*fragment@2 {
+    fragment@2 {
         target-path = "spi1/spidev@2";
 
         __dormant__ {
             status = "disabled";
         };
-    };*/
+    };
 
     __overrides__ {
         int_pin = <&eth1>, "interrupts:0",
